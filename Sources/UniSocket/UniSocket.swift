@@ -34,7 +34,7 @@ public class UniSocket {
 	private let bufferSize = 32768
 
 	public init(type: UniSocketType, peer: String, port: Int32? = nil, timeout: UniSocketTimeout = (connect: 5, read: 5, write: 5)) throws {
-		guard peer.characters.count > 0 else {
+		guard peer.count > 0 else {
 			throw UniSocketError.error(detail: "invalid peer name")
 		}
 		self.type = type
