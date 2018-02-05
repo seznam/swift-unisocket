@@ -135,15 +135,14 @@ public class UniSocket {
 	}
 
 	public func close() throws -> Void {
-		guard fd != -1 else {
-			throw UniSocketError.error(detail: "socket is \(status)")
-		}
-		if type == .tcp {
+		if status == .connected {
 			shutdown(fd, Int32(SHUT_RDWR))
 			usleep(10000)
 		}
-		_ = Glibc.close(fd)
-		fd = -1
+		if fd != -1 {
+			_ = Glibc.close(fd)
+			fd = -1
+		}
 		status = .none
 	}
 
@@ -190,7 +189,7 @@ public class UniSocket {
 	}
 
 	public func recv(min: Int = 1, max: Int? = nil) throws -> Data {
-		guard status == .connected else {
+		guard status == .connected || status == .stateless else {
 			throw UniSocketError.error(detail: "socket is \(status)")
 		}
 		if let errstr = waitFor(.readable) {
@@ -224,7 +223,7 @@ public class UniSocket {
 	}
 
 	public func send(_ buffer: Data) throws -> Void {
-		guard status == .connected else {
+		guard status == .connected || status == .stateless else {
 			throw UniSocketError.error(detail: "socket is \(status)")
 		}
 		var bytesLeft = buffer.count
@@ -235,7 +234,11 @@ public class UniSocket {
 			if let errstr = waitFor(.writable) {
 				throw UniSocketError.error(detail: errstr)
 			}
-			rc = bufferLeft.withUnsafeBytes { return Glibc.send(fd, $0, bytesLeft, 0) }
+			if status == .stateless, let ai = peer_addrinfo {
+				rc = bufferLeft.withUnsafeBytes { return Glibc.sendto(fd, $0, bytesLeft, 0, ai.pointee.ai_addr, ai.pointee.ai_addrlen) }
+			} else {
+				rc = bufferLeft.withUnsafeBytes { return Glibc.send(fd, $0, bytesLeft, 0) }
+			}
 			if rc == -1 {
 				let errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
 				throw UniSocketError.error(detail: "failed to write to socket, \(errstr)")
@@ -245,12 +248,6 @@ public class UniSocket {
 	}
 
 	public func recvfrom() throws -> Data {
-
-		throw UniSocketError.error(detail: "not yet implemented")
-
-	}
-
-	public func sendto() throws -> Data {
 
 		throw UniSocketError.error(detail: "not yet implemented")
 
