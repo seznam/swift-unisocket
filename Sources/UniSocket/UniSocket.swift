@@ -253,17 +253,6 @@ public class UniSocket {
 
 	}
 
-	public class func gethostname() -> String? {
-		let buffer = UnsafeMutablePointer<Int8>.allocate(capacity: Int(_POSIX_HOST_NAME_MAX))
-		_ = Glibc.gethostname(buffer, Int(_POSIX_HOST_NAME_MAX))
-		var result: String?
-		if let string = String(cString: buffer, encoding: .utf8) {
-			result = string
-		}
-		buffer.deallocate(capacity: Int(_POSIX_HOST_NAME_MAX))
-		return result
-	}
-
 }
 
 // NOTE: Borrowed from https://github.com/IBM-Swift/BlueSocket.git
