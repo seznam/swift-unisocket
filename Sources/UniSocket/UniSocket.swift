@@ -87,8 +87,8 @@ public class UniSocket {
 
 	deinit {
 		try? close()
-		buffer.deallocate(capacity: bufferSize)
-		peer_addrinfo?.deallocate(capacity: 1)
+		buffer.deallocate()
+		peer_addrinfo?.deallocate()
 	}
 
 	public func attach() throws -> Void {
