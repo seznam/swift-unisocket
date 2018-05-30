@@ -66,7 +66,11 @@ public class UniSocket {
 				}
 			}
 			peer_addrinfo!.pointee.ai_family = PF_LOCAL
+#if os(macOS) || os(iOS) || os(tvOS)
+			peer_addrinfo!.pointee.ai_socktype = SOCK_STREAM
+#elseif os(Linux)
 			peer_addrinfo!.pointee.ai_socktype = Int32(SOCK_STREAM.rawValue)
+#endif
 			peer_addrinfo!.pointee.ai_protocol = 0
 			_ = withUnsafeMutablePointer(to: &peer_local) { src in
 				_ = withUnsafeMutablePointer(to: &peer_addrinfo!.pointee.ai_addr) { dst in
@@ -80,12 +84,24 @@ public class UniSocket {
 			}
 			var rc: Int32
 			var errstr: String = ""
+#if os(macOS) || os(iOS) || os(tvOS)
+			var hints = addrinfo(ai_flags: AI_PASSIVE, ai_family: PF_UNSPEC, ai_socktype: 0, ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+#elseif os(Linux)
 			var hints = addrinfo(ai_flags: AI_PASSIVE, ai_family: PF_UNSPEC, ai_socktype: 0, ai_protocol: 0, ai_addrlen: 0, ai_addr: nil, ai_canonname: nil, ai_next: nil)
+#endif
 			switch type {
 			case .tcp:
+#if os(macOS) || os(iOS) || os(tvOS)
+				hints.ai_socktype = SOCK_STREAM
+#elseif os(Linux)
 				hints.ai_socktype = Int32(SOCK_STREAM.rawValue)
+#endif
 			case .udp:
+#if os(macOS) || os(iOS) || os(tvOS)
+				hints.ai_socktype = SOCK_DGRAM
+#elseif os(Linux)
 				hints.ai_socktype = Int32(SOCK_DGRAM.rawValue)
+#endif
 			default:
 				throw UniSocketError.error(detail: "unsupported socket type \(type)")
 			}
