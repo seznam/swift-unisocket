@@ -185,22 +185,22 @@ public class UniSocket {
 		var rc: Int32
 		var timer = timeval()
 		if let t = timeout {
-			timer.tv_sec = __time_t(t)
+			timer.tv_sec = time_t(t)
 		}
 		switch status {
 		case .connected:
 			if timeout == nil {
-				timer.tv_sec = __time_t(self.timeout.connect)
+				timer.tv_sec = time_t(self.timeout.connect)
 			}
 			rc = select(fd + 1, nil, &fds, nil, &timer)
 		case .readable:
 			if timeout == nil {
-				timer.tv_sec = __time_t(self.timeout.read)
+				timer.tv_sec = time_t(self.timeout.read)
 			}
 			rc = select(fd + 1, &fds, nil, nil, &timer)
 		case .writable:
 			if timeout == nil {
-				timer.tv_sec = __time_t(self.timeout.write)
+				timer.tv_sec = time_t(self.timeout.write)
 			}
 			rc = select(fd + 1, nil, &fds, nil, &timer)
 		default:
