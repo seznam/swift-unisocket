@@ -1,5 +1,21 @@
 import Foundation
+#if os(macOS) || os(iOS) || os(tvOS)
+import Darwin
+private let system_socket = Darwin.socket
+private let system_connect = Darwin.connect
+private let system_close = Darwin.close
+private let system_recv = Darwin.recv
+private let system_send = Darwin.send
+private let system_sendto = Darwin.sendto
+#elseif os(Linux)
 import Glibc
+private let system_socket = Glibc.socket
+private let system_connect = Glibc.connect
+private let system_close = Glibc.close
+private let system_recv = Glibc.recv
+private let system_send = Glibc.send
+private let system_sendto = Glibc.sendto
+#endif
 
 public enum UniSocketError: Error {
 	case error(detail: String)
@@ -99,7 +115,7 @@ public class UniSocket {
 		var errstr: String? = ""
 		var ai = peer_addrinfo
 		while ai != nil {
-			fd = Glibc.socket(ai!.pointee.ai_family, ai!.pointee.ai_socktype, ai!.pointee.ai_protocol)
+			fd = system_socket(ai!.pointee.ai_family, ai!.pointee.ai_socktype, ai!.pointee.ai_protocol)
 			if fd == -1 {
 				ai = ai?.pointee.ai_next
 				continue
@@ -110,7 +126,7 @@ public class UniSocket {
 					status = .stateless
 					return
 				}
-				rc = Glibc.connect(fd, ai!.pointee.ai_addr, ai!.pointee.ai_addrlen)
+				rc = system_connect(fd, ai!.pointee.ai_addr, ai!.pointee.ai_addrlen)
 				if rc == 0 {
 					break
 				}
@@ -124,7 +140,7 @@ public class UniSocket {
 			} else {
 				errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
 			}
-			_ = Glibc.close(fd)
+			_ = system_close(fd)
 			fd = -1
 			ai = ai?.pointee.ai_next
 		}
@@ -140,7 +156,7 @@ public class UniSocket {
 			usleep(10000)
 		}
 		if fd != -1 {
-			_ = Glibc.close(fd)
+			_ = system_close(fd)
 			fd = -1
 		}
 		status = .none
@@ -202,7 +218,7 @@ public class UniSocket {
 			if let m = max, (m - data.count) < bufferSize {
 				limit = m - data.count
 			}
-			rc = Glibc.recv(fd, buffer, limit, 0)
+			rc = system_recv(fd, buffer, limit, 0)
 			if rc == 0 {
 				try? close()
 				throw UniSocketError.error(detail: "connection closed by remote host")
@@ -235,9 +251,9 @@ public class UniSocket {
 				throw UniSocketError.error(detail: errstr)
 			}
 			if status == .stateless, let ai = peer_addrinfo {
-				rc = bufferLeft.withUnsafeBytes { return Glibc.sendto(fd, $0, bytesLeft, 0, ai.pointee.ai_addr, ai.pointee.ai_addrlen) }
+				rc = bufferLeft.withUnsafeBytes { return system_sendto(fd, $0, bytesLeft, 0, ai.pointee.ai_addr, ai.pointee.ai_addrlen) }
 			} else {
-				rc = bufferLeft.withUnsafeBytes { return Glibc.send(fd, $0, bytesLeft, 0) }
+				rc = bufferLeft.withUnsafeBytes { return system_send(fd, $0, bytesLeft, 0) }
 			}
 			if rc == -1 {
 				let errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
