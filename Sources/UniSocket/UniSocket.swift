@@ -1,5 +1,23 @@
 import Foundation
+#if os(macOS) || os(iOS) || os(tvOS)
+import Darwin
+private let system_socket = Darwin.socket
+private let system_connect = Darwin.connect
+private let system_close = Darwin.close
+private let system_recv = Darwin.recv
+private let system_send = Darwin.send
+private let system_sendto = Darwin.sendto
+typealias fdmask = Int32
+#elseif os(Linux)
 import Glibc
+private let system_socket = Glibc.socket
+private let system_connect = Glibc.connect
+private let system_close = Glibc.close
+private let system_recv = Glibc.recv
+private let system_send = Glibc.send
+private let system_sendto = Glibc.sendto
+typealias fdmask = __fd_mask
+#endif
 
 public enum UniSocketError: Error {
 	case error(detail: String)
@@ -28,6 +46,9 @@ public class UniSocket {
 	public var timeout: UniSocketTimeout
 	private(set) var status: UniSocketStatus = .none
 	private var fd: Int32 = -1
+	private var fdset = fd_set()
+	private let fdmask_size: Int
+	private let fdmask_bits: Int
 	private let peer: String
 	private var peer_addrinfo: UnsafeMutablePointer<addrinfo>? = UnsafeMutablePointer<addrinfo>.allocate(capacity: 1)
 	private var buffer: UnsafeMutablePointer<UInt8>
@@ -40,6 +61,8 @@ public class UniSocket {
 		self.type = type
 		self.timeout = timeout
 		self.peer = peer
+		fdmask_size = MemoryLayout<fdmask>.size
+		fdmask_bits = fdmask_size * 8
 		buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
 		if type == .local {
 			var peer_local = sockaddr_un()
@@ -50,7 +73,11 @@ public class UniSocket {
 				}
 			}
 			peer_addrinfo!.pointee.ai_family = PF_LOCAL
+#if os(macOS) || os(iOS) || os(tvOS)
+			peer_addrinfo!.pointee.ai_socktype = SOCK_STREAM
+#elseif os(Linux)
 			peer_addrinfo!.pointee.ai_socktype = Int32(SOCK_STREAM.rawValue)
+#endif
 			peer_addrinfo!.pointee.ai_protocol = 0
 			_ = withUnsafeMutablePointer(to: &peer_local) { src in
 				_ = withUnsafeMutablePointer(to: &peer_addrinfo!.pointee.ai_addr) { dst in
@@ -64,12 +91,24 @@ public class UniSocket {
 			}
 			var rc: Int32
 			var errstr: String = ""
+#if os(macOS) || os(iOS) || os(tvOS)
+			var hints = addrinfo(ai_flags: AI_PASSIVE, ai_family: PF_UNSPEC, ai_socktype: 0, ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+#elseif os(Linux)
 			var hints = addrinfo(ai_flags: AI_PASSIVE, ai_family: PF_UNSPEC, ai_socktype: 0, ai_protocol: 0, ai_addrlen: 0, ai_addr: nil, ai_canonname: nil, ai_next: nil)
+#endif
 			switch type {
 			case .tcp:
+#if os(macOS) || os(iOS) || os(tvOS)
+				hints.ai_socktype = SOCK_STREAM
+#elseif os(Linux)
 				hints.ai_socktype = Int32(SOCK_STREAM.rawValue)
+#endif
 			case .udp:
+#if os(macOS) || os(iOS) || os(tvOS)
+				hints.ai_socktype = SOCK_DGRAM
+#elseif os(Linux)
 				hints.ai_socktype = Int32(SOCK_DGRAM.rawValue)
+#endif
 			default:
 				throw UniSocketError.error(detail: "unsupported socket type \(type)")
 			}
@@ -91,6 +130,18 @@ public class UniSocket {
 		peer_addrinfo?.deallocate()
 	}
 
+	private func FD_SET() -> Void {
+		let index = Int(fd) / fdmask_bits
+		let bit = Int(fd) % fdmask_bits
+		var mask: fdmask = 1 << bit
+		_ = withUnsafePointer(to: &mask) { src in
+			_ = withUnsafeMutablePointer(to: &fdset) { dst in
+				memset(dst, 0, MemoryLayout<fd_set>.size)
+				memcpy(dst + (index * fdmask_size), src, fdmask_size)
+			}
+		}
+	}
+
 	public func attach() throws -> Void {
 		guard status == .none else {
 			throw UniSocketError.error(detail: "socket is \(status)")
@@ -99,18 +150,19 @@ public class UniSocket {
 		var errstr: String? = ""
 		var ai = peer_addrinfo
 		while ai != nil {
-			fd = Glibc.socket(ai!.pointee.ai_family, ai!.pointee.ai_socktype, ai!.pointee.ai_protocol)
+			fd = system_socket(ai!.pointee.ai_family, ai!.pointee.ai_socktype, ai!.pointee.ai_protocol)
 			if fd == -1 {
 				ai = ai?.pointee.ai_next
 				continue
 			}
+			FD_SET()
 			let flags = fcntl(fd, F_GETFL)
 			if flags != -1, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 {
 				if type == .udp {
 					status = .stateless
 					return
 				}
-				rc = Glibc.connect(fd, ai!.pointee.ai_addr, ai!.pointee.ai_addrlen)
+				rc = system_connect(fd, ai!.pointee.ai_addr, ai!.pointee.ai_addrlen)
 				if rc == 0 {
 					break
 				}
@@ -124,7 +176,7 @@ public class UniSocket {
 			} else {
 				errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
 			}
-			_ = Glibc.close(fd)
+			_ = system_close(fd)
 			fd = -1
 			ai = ai?.pointee.ai_next
 		}
@@ -140,35 +192,33 @@ public class UniSocket {
 			usleep(10000)
 		}
 		if fd != -1 {
-			_ = Glibc.close(fd)
+			_ = system_close(fd)
 			fd = -1
 		}
 		status = .none
 	}
 
 	private func waitFor(_ status: UniSocketStatus, timeout: UInt? = nil) -> String? {
-		var fds = fd_set()
-		FD.ZERO(set: &fds)
-		FD.SET(fd: fd, set: &fds)
 		var rc: Int32
+		var fds = fdset
 		var timer = timeval()
 		if let t = timeout {
-			timer.tv_sec = __time_t(t)
+			timer.tv_sec = time_t(t)
 		}
 		switch status {
 		case .connected:
 			if timeout == nil {
-				timer.tv_sec = __time_t(self.timeout.connect)
+				timer.tv_sec = time_t(self.timeout.connect)
 			}
 			rc = select(fd + 1, nil, &fds, nil, &timer)
 		case .readable:
 			if timeout == nil {
-				timer.tv_sec = __time_t(self.timeout.read)
+				timer.tv_sec = time_t(self.timeout.read)
 			}
 			rc = select(fd + 1, &fds, nil, nil, &timer)
 		case .writable:
 			if timeout == nil {
-				timer.tv_sec = __time_t(self.timeout.write)
+				timer.tv_sec = time_t(self.timeout.write)
 			}
 			rc = select(fd + 1, nil, &fds, nil, &timer)
 		default:
@@ -202,7 +252,7 @@ public class UniSocket {
 			if let m = max, (m - data.count) < bufferSize {
 				limit = m - data.count
 			}
-			rc = Glibc.recv(fd, buffer, limit, 0)
+			rc = system_recv(fd, buffer, limit, 0)
 			if rc == 0 {
 				try? close()
 				throw UniSocketError.error(detail: "connection closed by remote host")
@@ -235,9 +285,9 @@ public class UniSocket {
 				throw UniSocketError.error(detail: errstr)
 			}
 			if status == .stateless, let ai = peer_addrinfo {
-				rc = bufferLeft.withUnsafeBytes { return Glibc.sendto(fd, $0, bytesLeft, 0, ai.pointee.ai_addr, ai.pointee.ai_addrlen) }
+				rc = bufferLeft.withUnsafeBytes { return system_sendto(fd, $0, bytesLeft, 0, ai.pointee.ai_addr, ai.pointee.ai_addrlen) }
 			} else {
-				rc = bufferLeft.withUnsafeBytes { return Glibc.send(fd, $0, bytesLeft, 0) }
+				rc = bufferLeft.withUnsafeBytes { return system_send(fd, $0, bytesLeft, 0) }
 			}
 			if rc == -1 {
 				let errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
@@ -251,103 +301,6 @@ public class UniSocket {
 
 		throw UniSocketError.error(detail: "not yet implemented")
 
-	}
-
-}
-
-// NOTE: Borrowed from https://github.com/IBM-Swift/BlueSocket.git
-// Thanks to Bill Abt
-// Copyright 2016 IBM. All rights reserved.
-
-public struct FD {
-
-	public static let maskBits = Int32(MemoryLayout<__fd_mask>.size * 8)
-
-	/// Replacement for FD_ZERO macro
-
-	public static func ZERO(set: inout fd_set) {
-		set.__fds_bits = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-	}
-
-	/// Replacement for FD_SET macro
-
-	public static func SET(fd: Int32, set: inout fd_set) {
-		let intOffset = Int(fd / maskBits)
-		let bitOffset = Int(fd % maskBits)
-		let mask: Int = 1 << bitOffset
-		switch intOffset {
-		case 0: set.__fds_bits.0 = set.__fds_bits.0 | mask
-		case 1: set.__fds_bits.1 = set.__fds_bits.1 | mask
-		case 2: set.__fds_bits.2 = set.__fds_bits.2 | mask
-		case 3: set.__fds_bits.3 = set.__fds_bits.3 | mask
-		case 4: set.__fds_bits.4 = set.__fds_bits.4 | mask
-		case 5: set.__fds_bits.5 = set.__fds_bits.5 | mask
-		case 6: set.__fds_bits.6 = set.__fds_bits.6 | mask
-		case 7: set.__fds_bits.7 = set.__fds_bits.7 | mask
-		case 8: set.__fds_bits.8 = set.__fds_bits.8 | mask
-		case 9: set.__fds_bits.9 = set.__fds_bits.9 | mask
-		case 10: set.__fds_bits.10 = set.__fds_bits.10 | mask
-		case 11: set.__fds_bits.11 = set.__fds_bits.11 | mask
-		case 12: set.__fds_bits.12 = set.__fds_bits.12 | mask
-		case 13: set.__fds_bits.13 = set.__fds_bits.13 | mask
-		case 14: set.__fds_bits.14 = set.__fds_bits.14 | mask
-		case 15: set.__fds_bits.15 = set.__fds_bits.15 | mask
-		default: break
-		}
-	}
-
-	/// Replacement for FD_CLR macro
-
-	public static func CLR(fd: Int32, set: inout fd_set) {
-		let intOffset = Int(fd / maskBits)
-		let bitOffset = Int(fd % maskBits)
-		let mask: Int = ~(1 << bitOffset)
-		switch intOffset {
-		case 0: set.__fds_bits.0 = set.__fds_bits.0 & mask
-		case 1: set.__fds_bits.1 = set.__fds_bits.1 & mask
-		case 2: set.__fds_bits.2 = set.__fds_bits.2 & mask
-		case 3: set.__fds_bits.3 = set.__fds_bits.3 & mask
-		case 4: set.__fds_bits.4 = set.__fds_bits.4 & mask
-		case 5: set.__fds_bits.5 = set.__fds_bits.5 & mask
-		case 6: set.__fds_bits.6 = set.__fds_bits.6 & mask
-		case 7: set.__fds_bits.7 = set.__fds_bits.7 & mask
-		case 8: set.__fds_bits.8 = set.__fds_bits.8 & mask
-		case 9: set.__fds_bits.9 = set.__fds_bits.9 & mask
-		case 10: set.__fds_bits.10 = set.__fds_bits.10 & mask
-		case 11: set.__fds_bits.11 = set.__fds_bits.11 & mask
-		case 12: set.__fds_bits.12 = set.__fds_bits.12 & mask
-		case 13: set.__fds_bits.13 = set.__fds_bits.13 & mask
-		case 14: set.__fds_bits.14 = set.__fds_bits.14 & mask
-		case 15: set.__fds_bits.15 = set.__fds_bits.15 & mask
-		default: break
-		}
-	}
-
-	/// Replacement for FD_ISSET macro
-
-	public static func ISSET(fd: Int32, set: inout fd_set) -> Bool {
-		let intOffset = Int(fd / maskBits)
-		let bitOffset = Int(fd % maskBits)
-		let mask: Int = 1 << bitOffset
-		switch intOffset {
-		case 0: return set.__fds_bits.0 & mask != 0
-		case 1: return set.__fds_bits.1 & mask != 0
-		case 2: return set.__fds_bits.2 & mask != 0
-		case 3: return set.__fds_bits.3 & mask != 0
-		case 4: return set.__fds_bits.4 & mask != 0
-		case 5: return set.__fds_bits.5 & mask != 0
-		case 6: return set.__fds_bits.6 & mask != 0
-		case 7: return set.__fds_bits.7 & mask != 0
-		case 8: return set.__fds_bits.8 & mask != 0
-		case 9: return set.__fds_bits.9 & mask != 0
-		case 10: return set.__fds_bits.10 & mask != 0
-		case 11: return set.__fds_bits.11 & mask != 0
-		case 12: return set.__fds_bits.12 & mask != 0
-		case 13: return set.__fds_bits.13 & mask != 0
-		case 14: return set.__fds_bits.14 & mask != 0
-		case 15: return set.__fds_bits.15 & mask != 0
-		default: return false
-		}
 	}
 
 }
