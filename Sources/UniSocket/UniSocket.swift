@@ -51,6 +51,7 @@ public class UniSocket {
 	private let fdmask_bits: Int
 	private let peer: String
 	private var peer_addrinfo: UnsafeMutablePointer<addrinfo>? = UnsafeMutablePointer<addrinfo>.allocate(capacity: 1)
+	private var peer_local = sockaddr_un()
 	private var buffer: UnsafeMutablePointer<UInt8>
 	private let bufferSize = 32768
 
@@ -64,9 +65,9 @@ public class UniSocket {
 		fdmask_size = MemoryLayout<fdmask>.size
 		fdmask_bits = fdmask_size * 8
 		buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+		memset(peer_addrinfo!, 0, MemoryLayout<addrinfo>.size)
 		if type == .local {
-			var peer_local = sockaddr_un()
-			peer_local.sun_family = sa_family_t(PF_UNIX)
+			peer_local.sun_family = sa_family_t(AF_UNIX)
 			_ = withUnsafeMutablePointer(to: &peer_local.sun_path.0) { ptr in
 				_ = peer.withCString {
 					strcpy(ptr, $0)
@@ -79,11 +80,8 @@ public class UniSocket {
 			peer_addrinfo!.pointee.ai_socktype = Int32(SOCK_STREAM.rawValue)
 #endif
 			peer_addrinfo!.pointee.ai_protocol = 0
-			_ = withUnsafeMutablePointer(to: &peer_local) { src in
-				_ = withUnsafeMutablePointer(to: &peer_addrinfo!.pointee.ai_addr) { dst in
-					memcpy(dst, src, MemoryLayout<sockaddr_un>.size)
-				}
-			}
+			let ptr: UnsafeMutablePointer<sockaddr_un> = withUnsafeMutablePointer(to: &peer_local) { $0 }
+			peer_addrinfo!.pointee.ai_addr = ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 }
 			peer_addrinfo!.pointee.ai_addrlen = socklen_t(MemoryLayout<sockaddr_un>.size)
 		} else {
 			guard let p = port else {
@@ -127,7 +125,9 @@ public class UniSocket {
 	deinit {
 		try? close()
 		buffer.deallocate()
-		peer_addrinfo?.deallocate()
+		if let ai = peer_addrinfo {
+			freeaddrinfo(ai)
+		}
 	}
 
 	private func FD_SET() -> Void {
