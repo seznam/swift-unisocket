@@ -8,13 +8,11 @@ class UniSocketTests: XCTestCase {
 	static var allTests = [
 		("testTCP", testTCP),
 		("testTCP4", testTCP4),
-		("testTCP6", testTCP6),
 		("testTCPTimeout", testTCPTimeout),
 		("testTCPRefused", testTCPRefused),
 		("testTCPNotFound", testTCPNotFound),
 		("testUDP", testUDP),
 		("testUDP4", testUDP4),
-		("testUDP6", testUDP6),
 		("testUDPTimeout", testUDPTimeout),
 		("testUnixRefused", testUnixRefused),
 		("testUnixNotFound", testUnixNotFound),
@@ -42,7 +40,7 @@ class UniSocketTests: XCTestCase {
 	func testTCP4() {
 		var response: String? = nil
 		do {
-			let socket = try UniSocket(type: .tcp, peer: "77.75.76.42", port: 25)
+			let socket = try UniSocket(type: .tcp, peer: "77.75.76.46", port: 110)
 			try socket.attach()
 			let dataIn = try socket.recv(min: 4)
 			response = String(data: dataIn, encoding: .utf8)
@@ -55,26 +53,7 @@ class UniSocketTests: XCTestCase {
 		} catch {
 			print(error)
 		}
-		XCTAssert(response != nil && response!.hasPrefix("220 "))
-	}
-
-	func testTCP6() {
-		var response: String? = nil
-		do {
-			let socket = try UniSocket(type: .tcp, peer: "2a02:598:2::1053", port: 80)
-			try socket.attach()
-			let request = "HEAD / HTTP/1.0\r\n\r\n"
-			let dataOut = request.data(using: .utf8)
-			try socket.send(dataOut!)
-			let dataIn = try socket.recv(min: 16)
-			response = String(data: dataIn, encoding: .utf8)
-			try socket.close()
-		} catch UniSocketError.error(let detail) {
-			print(detail)
-		} catch {
-			print(error)
-		}
-		XCTAssert(response != nil && response!.hasPrefix("HTTP/1"))
+		XCTAssert(response != nil && response!.hasPrefix("+OK "))
 	}
 
 	func testTCPTimeout() {
@@ -167,25 +146,6 @@ class UniSocketTests: XCTestCase {
 		XCTAssert(response != nil && response!.answers.count > 0)
 	}
 
-	func testUDP6() {
-		var response: Message? = nil
-		do {
-			let socket = try UniSocket(type: .udp, peer: "2a02:598:3333::3", port: 53)
-			try socket.attach()
-			let request = Message(type: .query, questions: [Question(name: "seznam.cz.", type: .mailExchange)])
-			let requestData = try request.serialize()
-			try socket.send(requestData)
-			let responseData = try socket.recv(min: 25)
-			response = try Message.init(deserialize: responseData)
-			try socket.close()
-		} catch UniSocketError.error(let detail) {
-			print(detail)
-		} catch {
-			print(error)
-		}
-		XCTAssert(response != nil && response!.answers.count > 0)
-	}
-
 	func testUDPTimeout() {
 		let t: UInt = 2
 		let timeout: UniSocketTimeout = (connect: t, read: t, write: t)
@@ -218,7 +178,7 @@ class UniSocketTests: XCTestCase {
 		} catch {
 			print(error)
 		}
-		XCTAssert(response != nil && response!.contains("refused"))
+		XCTAssert(response != nil && (response!.contains("refused") || (response!.contains("non-socket"))))
 	}
 
 	func testUnixNotFound() {
@@ -234,6 +194,53 @@ class UniSocketTests: XCTestCase {
 			print(error)
 		}
 		XCTAssert(response != nil && response!.contains("No such file"))
+	}
+
+}
+
+class UniSocketIPv6Tests: XCTestCase {
+
+	static var allTests = [
+		("testTCP6", testTCP6),
+		("testUDP6", testUDP6),
+	]
+
+	func testTCP6() {
+		var response: String? = nil
+		do {
+			let socket = try UniSocket(type: .tcp, peer: "2a02:598:2::1053", port: 80)
+			try socket.attach()
+			let request = "HEAD / HTTP/1.0\r\n\r\n"
+			let dataOut = request.data(using: .utf8)
+			try socket.send(dataOut!)
+			let dataIn = try socket.recv(min: 16)
+			response = String(data: dataIn, encoding: .utf8)
+			try socket.close()
+		} catch UniSocketError.error(let detail) {
+			print(detail)
+		} catch {
+			print(error)
+		}
+		XCTAssert(response != nil && response!.hasPrefix("HTTP/1"))
+	}
+
+	func testUDP6() {
+		var response: Message? = nil
+		do {
+			let socket = try UniSocket(type: .udp, peer: "2a02:598:3333::3", port: 53)
+			try socket.attach()
+			let request = Message(type: .query, questions: [Question(name: "seznam.cz.", type: .mailExchange)])
+			let requestData = try request.serialize()
+			try socket.send(requestData)
+			let responseData = try socket.recv(min: 25)
+			response = try Message.init(deserialize: responseData)
+			try socket.close()
+		} catch UniSocketError.error(let detail) {
+			print(detail)
+		} catch {
+			print(error)
+		}
+		XCTAssert(response != nil && response!.answers.count > 0)
 	}
 
 }

@@ -4,4 +4,5 @@ import XCTest
 
 XCTMain([
 	testCase(UniSocketTests.allTests),
+	testCase(UniSocketIPv6Tests.allTests)
 ])
