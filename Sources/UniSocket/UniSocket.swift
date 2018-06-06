@@ -145,7 +145,9 @@ public class UniSocket {
 	deinit {
 		try? close()
 		buffer.deallocate()
-		if let ai = peer_addrinfo {
+		if type == .local {
+			peer_addrinfo?.deallocate()
+		} else if let ai = peer_addrinfo {
 			freeaddrinfo(ai)
 		}
 	}
