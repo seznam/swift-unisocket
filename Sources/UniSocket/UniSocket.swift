@@ -117,7 +117,7 @@ public class UniSocket {
 				if rc == EAI_SYSTEM {
 					errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
 				} else {
-					errstr = String(validatingUTF8: gai_strerror(errno)) ?? "unknown error code"
+					errstr = String(validatingUTF8: gai_strerror(rc)) ?? "unknown error code"
 				}
 				throw UniSocketError.error(detail: "failed to resolve '\(peer)', \(errstr)")
 			}
