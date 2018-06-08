@@ -70,7 +70,7 @@ public class UniSocket {
 	private let fdmask_size: Int
 	private let fdmask_bits: Int
 	private let peer: String
-	private var peer_addrinfo: UnsafeMutablePointer<addrinfo>? = UnsafeMutablePointer<addrinfo>.allocate(capacity: 1)
+	private var peer_addrinfo: UnsafeMutablePointer<addrinfo>
 	private var peer_local = sockaddr_un()
 	private var buffer: UnsafeMutablePointer<UInt8>
 	private let bufferSize = 32768
@@ -85,7 +85,8 @@ public class UniSocket {
 		fdmask_size = MemoryLayout<fdmask>.size
 		fdmask_bits = fdmask_size * 8
 		buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-		memset(peer_addrinfo!, 0, MemoryLayout<addrinfo>.size)
+		peer_addrinfo = UnsafeMutablePointer<addrinfo>.allocate(capacity: 1)
+		memset(peer_addrinfo, 0, MemoryLayout<addrinfo>.size)
 		if type == .local {
 			peer_local.sun_family = sa_family_t(AF_UNIX)
 			_ = withUnsafeMutablePointer(to: &peer_local.sun_path.0) { ptr in
@@ -93,16 +94,16 @@ public class UniSocket {
 					strcpy(ptr, $0)
 				}
 			}
-			peer_addrinfo!.pointee.ai_family = PF_LOCAL
+			peer_addrinfo.pointee.ai_family = PF_LOCAL
 #if os(macOS) || os(iOS) || os(tvOS)
-			peer_addrinfo!.pointee.ai_socktype = SOCK_STREAM
+			peer_addrinfo.pointee.ai_socktype = SOCK_STREAM
 #elseif os(Linux)
-			peer_addrinfo!.pointee.ai_socktype = Int32(SOCK_STREAM.rawValue)
+			peer_addrinfo.pointee.ai_socktype = Int32(SOCK_STREAM.rawValue)
 #endif
-			peer_addrinfo!.pointee.ai_protocol = 0
+			peer_addrinfo.pointee.ai_protocol = 0
 			let ptr: UnsafeMutablePointer<sockaddr_un> = withUnsafeMutablePointer(to: &peer_local) { $0 }
-			peer_addrinfo!.pointee.ai_addr = ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 }
-			peer_addrinfo!.pointee.ai_addrlen = socklen_t(MemoryLayout<sockaddr_un>.size)
+			peer_addrinfo.pointee.ai_addr = ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 }
+			peer_addrinfo.pointee.ai_addrlen = socklen_t(MemoryLayout<sockaddr_un>.size)
 		} else {
 			guard let p = port else {
 				throw UniSocketError.error(detail: "missing port")
@@ -130,7 +131,8 @@ public class UniSocket {
 			default:
 				throw UniSocketError.error(detail: "unsupported socket type \(type)")
 			}
-			rc = getaddrinfo(peer, String(p), &hints, &peer_addrinfo)
+			var ptr: UnsafeMutablePointer<addrinfo>? = peer_addrinfo
+			rc = getaddrinfo(peer, String(p), &hints, &ptr)
 			if rc != 0 {
 				if rc == EAI_SYSTEM {
 					errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
@@ -139,6 +141,8 @@ public class UniSocket {
 				}
 				throw UniSocketError.error(detail: "failed to resolve '\(peer)', \(errstr)")
 			}
+			peer_addrinfo.deallocate()
+			peer_addrinfo = ptr!
 		}
 	}
 
@@ -146,9 +150,9 @@ public class UniSocket {
 		try? close()
 		buffer.deallocate()
 		if type == .local {
-			peer_addrinfo?.deallocate()
-		} else if let ai = peer_addrinfo {
-			freeaddrinfo(ai)
+			peer_addrinfo.deallocate()
+		} else {
+			freeaddrinfo(peer_addrinfo)
 		}
 	}
 
@@ -170,7 +174,7 @@ public class UniSocket {
 		}
 		var rc: Int32
 		var errstr: String? = ""
-		var ai = peer_addrinfo
+		var ai: UnsafeMutablePointer<addrinfo>? = peer_addrinfo
 		while ai != nil {
 			fd = system_socket(ai!.pointee.ai_family, ai!.pointee.ai_socktype, ai!.pointee.ai_protocol)
 			if fd == -1 {
@@ -306,8 +310,8 @@ public class UniSocket {
 			if let errstr = waitFor(.writable) {
 				throw UniSocketError.error(detail: errstr)
 			}
-			if status == .stateless, let ai = peer_addrinfo {
-				rc = bufferLeft.withUnsafeBytes { return system_sendto(fd, $0, bytesLeft, 0, ai.pointee.ai_addr, ai.pointee.ai_addrlen) }
+			if status == .stateless {
+				rc = bufferLeft.withUnsafeBytes { return system_sendto(fd, $0, bytesLeft, 0, peer_addrinfo.pointee.ai_addr, peer_addrinfo.pointee.ai_addrlen) }
 			} else {
 				rc = bufferLeft.withUnsafeBytes { return system_send(fd, $0, bytesLeft, 0) }
 			}
