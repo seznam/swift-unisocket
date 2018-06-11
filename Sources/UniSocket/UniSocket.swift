@@ -132,6 +132,7 @@ public class UniSocket {
 				throw UniSocketError.error(detail: "unsupported socket type \(type)")
 			}
 			var ptr: UnsafeMutablePointer<addrinfo>? = peer_addrinfo
+			peer_addrinfo.deallocate()
 			rc = getaddrinfo(peer, String(p), &hints, &ptr)
 			if rc != 0 {
 				if rc == EAI_SYSTEM {
@@ -141,7 +142,6 @@ public class UniSocket {
 				}
 				throw UniSocketError.error(detail: "failed to resolve '\(peer)', \(errstr)")
 			}
-			peer_addrinfo.deallocate()
 			peer_addrinfo = ptr!
 		}
 	}
