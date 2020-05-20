@@ -62,7 +62,7 @@ class UniSocketTests: XCTestCase {
 		let timeout: UniSocketTimeout = (connect: t, read: t, write: t)
 		let from = Date().timeIntervalSince1970
 		do {
-			let socket = try UniSocket(type: .tcp, peer: "technometr.seznam.cz", port: 25, timeout: timeout)
+			let socket = try UniSocket(type: .tcp, peer: "4.4.4.4", port: 23, timeout: timeout)
 			try socket.attach()
 			let dataIn = try socket.recv()
 			response = String(data: dataIn, encoding: .utf8)
