@@ -1,4 +1,4 @@
-// swift-tools-version:4.0
+// swift-tools-version:5.2
 
 import PackageDescription
 
@@ -8,10 +8,11 @@ let package = Package(
 		.library(name: "UniSocket", targets: ["UniSocket"])
 	],
 	dependencies: [
-		.package(url: "https://github.com/Bouke/DNS.git", "1.0.0"..<"1.2.0")
+		.package(url: "https://github.com/Bouke/DNS.git", from: "1.2.0")
 	],
 	targets: [
 		.target(name: "UniSocket"),
 		.testTarget(name: "UniSocketTests", dependencies: ["UniSocket", "DNS"])
-	]
+	],
+	swiftLanguageVersions: [.v5]
 )
