@@ -311,9 +311,9 @@ public class UniSocket {
 				throw UniSocketError.error(detail: errstr)
 			}
 			if status == .stateless {
-				rc = bufferLeft.withUnsafeBytes { return system_sendto(fd, $0, bytesLeft, 0, peer_addrinfo.pointee.ai_addr, peer_addrinfo.pointee.ai_addrlen) }
+				rc = bufferLeft.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> Int in return system_sendto(fd, ptr.baseAddress, bytesLeft, 0, peer_addrinfo.pointee.ai_addr, peer_addrinfo.pointee.ai_addrlen) }
 			} else {
-				rc = bufferLeft.withUnsafeBytes { return system_send(fd, $0, bytesLeft, 0) }
+				rc = bufferLeft.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> Int in return system_send(fd, ptr.baseAddress, bytesLeft, 0) }
 			}
 			if rc == -1 {
 				let errstr = String(validatingUTF8: strerror(errno)) ?? "unknown error code"
